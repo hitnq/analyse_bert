@@ -73,14 +73,17 @@ def find_answer_paragraph(only_short_data):
                     para_end = len(context)
             delete_list = [index.end() for index in re.finditer('=-*[0-9]+\]+',context[para_start:para_end])]
             paragraph = context[para_start+delete_list[-1]+1:para_end]
-            query_para_pair,char2token_q,char2token_p = find_question_para_shortcut_pair(question,paragraph)
-            if len(query_para_pair)==0:
-                continue
+            query_para_pair, doc_tokens_query, doc_tokens_para, \
+            char_to_word_offset_query, char_to_word_offset_para = \
+                find_question_para_shortcut_pair(question,paragraph)
             if len(query_para_pair) != 0:
                 data['paragraphs'].append({'context': paragraph,
-                                           'charoftoken_q': char2token_q,
-                                           'charoftoken_p': char2token_p,
+                                           'doc_tokens_query': doc_tokens_query,
+                                           'doc_tokens_para': doc_tokens_para,
+                                           'char_to_word_offset_query': char_to_word_offset_query,
+                                           'char_to_word_offset_para': char_to_word_offset_para,
                                            'qas': [{'question': question,
+                                                    'sync_pair': query_para_pair,
                                                     'id': qas_id}]})
                 all_sync_pair.append(query_para_pair)
                 record_ids.append(qas_id)
@@ -93,46 +96,52 @@ def find_answer_paragraph(only_short_data):
     print('examples:',len(record_ids))
     return record_ids,all_sync_pair
 
+def is_whitespace(c):
+    if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
+        return True
+    return False
+
+def get_char_of_token(sentence):
+    doc_tokens_original = []
+    char_to_word_offset_origin = []
+    pre_is_white_space = True
+    for c in sentence:
+        if is_whitespace(c):
+            pre_is_white_space = True
+        else:
+            if pre_is_white_space:
+                doc_tokens_original.append(c)
+            else:
+                doc_tokens_original[-1] += c
+            pre_is_white_space = False
+        char_to_word_offset_origin.append(len(doc_tokens_original) - 1)
+    return doc_tokens_original,char_to_word_offset_origin
+
 def find_question_para_shortcut_pair(question,paragraph):
-    char2token_q = []
-    char2token_p = []
-    query = question.split()
-    para = paragraph.split()
-    for q in query:
-        try:
-            word_map = {'word': q,'pos': [m.start() for m in re.finditer(q,question)]}
-        except:
-            word_map = {'word': q, 'pos': []}
-        char2token_q.append(word_map)
-    for p in para:
-        try:
-            word_map = {'word': p, 'pos': [m.start() for m in re.finditer(p, paragraph)]}
-        except:
-            word_map = {'word': p, 'pos': []}
-        char2token_p.append(word_map)
-    assert len(query)==len(char2token_q)
-    assert len(para)==len(char2token_p)
+    doc_tokens_query, char_to_word_offset_query = get_char_of_token(question)
+    doc_tokens_para, char_to_word_offset_para = get_char_of_token(paragraph)
 
     sync_pair = {}
-    for q in range(len(query)):
-        if len(query[q]) < 2 or query[q] in STOP_WORDS:
+    for q in range(len(doc_tokens_query)):
+        if len(doc_tokens_query[q]) < 2 or doc_tokens_query[q] in STOP_WORDS:
             continue
-        for i in range(len(para)-len(query[q])):
+        for i in range(len(doc_tokens_para)-len(doc_tokens_query[q])):
             perfix = ''
-            for w in para[i:i+len(query[q])]:
+            for w in doc_tokens_para[i:i+len(doc_tokens_query[q])]:
                 if w[0].isupper():
                     perfix += w[0]
                 else:
                     break
-            if len(perfix) != len(query[q]):
+            if len(perfix) != len(doc_tokens_query[q]):
                 continue
-            if perfix.lower() == query[q]:
-                sync_pair[' '.join(para[i:i+len(query[q])])] = query[q]
-    return sync_pair,char2token_q,char2token_p
+            if perfix.lower() == doc_tokens_query[q]:
+                sync_pair[i] = q
+    #print(sync_pair)
+    return sync_pair,doc_tokens_query,doc_tokens_para,\
+           char_to_word_offset_query,char_to_word_offset_para
 
-def sentence_lemma(sentence):
-    tokens = word_tokenize(sentence.lower())
-    tagged_sent = pos_tag(tokens)
+def sentence_lemma(doc_tokens):
+    tagged_sent = pos_tag(doc_tokens)
     wnl = WordNetLemmatizer()
     lemmas_sent = []
     for tag in tagged_sent:

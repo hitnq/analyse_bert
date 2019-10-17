@@ -48,6 +48,7 @@ def find_answer_paragraph(only_short_data):
     #找到answer所在的para 并得到最后的结果
     all_sync_pair = []
     record_ids = []
+    final_shortcut_data = {'version': 'short_cut', 'data': []}
     for paragraphs in tqdm.tqdm(only_short_data['data']):
         context = paragraphs['paragraphs'][0]['context']
         question = paragraphs['paragraphs'][0]['qas'][0]['question']
@@ -55,6 +56,7 @@ def find_answer_paragraph(only_short_data):
         qas_id = paragraphs['paragraphs'][0]['qas'][0]['id']
         #print(context[answers[0]['nq_span_start']:answers[0]['nq_span_end']])
         #print(answers[0]['nq_span_text'])
+        data = {'title': paragraphs['title'], 'paragraphs': []}
         for answer in answers:
             paragraph_id = answer['nq_candidate_id']
             label = '[ContextId='+str(paragraph_id)+']'
@@ -66,26 +68,30 @@ def find_answer_paragraph(only_short_data):
                     break
                 if i == len(context)-1:
                     para_end = len(context)
-            delete_list = [index.end() for index in re.finditer('=-*[0-9]+\]+',context[para_start:para_end])]
+            delete_list = [index.end() for index in re.finditer('=-*[0-9]+\]+',
+                                                                context[para_start:para_end])]
             paragraph = context[para_start+delete_list[-1]:para_end]
-            query_para_pair = find_question_para_sync_pair(question,paragraph)
-            if len(query_para_pair) != 0:
-                with open('./sync.txt', 'w') as w:
-                    w.write(str(query_para_pair))
-                    w.write('\n')
-                    w.write('\n')
-                    w.write(question)
-                    w.write('\n')
-                    w.write('\n')
-                    w.write(paragraph)
-                    w.write('\n')
-                    w.write('\n')
-                    w.write(answer['text'])
-                    w.write('\n')
-                    w.write('\n')
-                all_sync_pair.append(query_para_pair)
+            sync_pair, \
+            doc_tokens_query, \
+            doc_tokens_para, \
+            char_to_word_offset_query, \
+            char_to_word_offset_para = \
+                find_question_para_sync_pair(question,paragraph)
+            if len(sync_pair) != 0:
+                data['paragraphs'].append({'context': paragraph,
+                                           'doc_tokens_query': doc_tokens_query,
+                                           'doc_tokens_para': doc_tokens_para,
+                                           'char_to_word_offset_query': char_to_word_offset_query,
+                                           'char_to_word_offset_para': char_to_word_offset_para,
+                                           'qas': [{'question': question,
+                                                    'sync_pair': sync_pair,
+                                                    'id': qas_id}]})
+                all_sync_pair.append(sync_pair)
                 record_ids.append(qas_id)
+        final_shortcut_data['data'].append(data)
     print(all_sync_pair)
+    with open('./sync_sync.json', 'w') as w:
+        json.dump(final_shortcut_data,w)
     record_ids = list(set(record_ids))
     print(record_ids)
     return record_ids,all_sync_pair
@@ -93,51 +99,27 @@ def find_answer_paragraph(only_short_data):
 def find_sen_sync(sen_lemma):
     #找到一句话中的所有词的同义词
     all_sen_sync = []
-    for word in sen_lemma:
-        word_set = wn.synsets(word)
+    for wo in range(len(sen_lemma)):
+        word_set = wn.synsets(sen_lemma[wo])
         if len(word_set) != 0:
             word_set_filter = {}
-            if word not in word_set_filter:
-                word_set_filter[word] = []
+            if sen_lemma[wo] not in word_set_filter:
+                word_set_filter[sen_lemma[wo]] = []
             for item in word_set:
                 for w in item.lemma_names():
-                    if w != word:
-                        word_set_filter[word].append(w)
+                    if w != sen_lemma[wo]:
+                        word_set_filter[sen_lemma[wo]].append(w)
             all_sen_sync.append(word_set_filter)
-    return all_sen_sync
+    return all_sen_sync,wo
 
-def find_question_para_sync_pair(question,paragraph):#try1
-    #先找question中所有词的同义词，遍历para中的所有词 看是否能在question的同义词集合中找到。
-    question_lemma_has_stop = sentence_lemma(question)
-    para_lemma_has_stop = sentence_lemma(paragraph)
-    question_lemma = []
-    para_lemma = []
-    for w in question_lemma_has_stop:
-        if w not in STOP_WORDS:
-            question_lemma.append(w)
-    for w in para_lemma_has_stop:
-        if w not in STOP_WORDS:
-            para_lemma.append(w)
-    sync_pair = {}
-    all_question_sync = find_sen_sync(question_lemma)
-    all_para_sync = find_sen_sync(para_lemma)
-    for q in all_question_sync[0].keys():
-        for p in all_para_sync[0].keys():
-            compare_set = set(all_question_sync[0][q]) & set(all_para_sync[0][p])
-            if len(compare_set) != 0 and p != q:
-                sync_pair[q] = p
-    return sync_pair
-
-def sentence_lemma(sentence):#将一句话中的所有词转为lemma
-    tokens = word_tokenize(sentence.lower())  # 分词
-    tagged_sent = pos_tag(tokens) #获取词性
+def sentence_lemma(doc_tokens):#将一句话中的所有词转为lemma
+    tagged_sent = pos_tag(doc_tokens) #获取词性
     wnl = WordNetLemmatizer()#词形还原器
     lemmas_sent = []
     for tag in tagged_sent:
         wordnet_pos = get_wordnet_pos(tag[1]) or wn.NOUN
         lemmas_sent.append(wnl.lemmatize(tag[0], pos=wordnet_pos))  # 词形还原
     return lemmas_sent
-
 
 def get_wordnet_pos(tag):#获取单词的词性
     if tag.startswith('J'):
@@ -151,11 +133,66 @@ def get_wordnet_pos(tag):#获取单词的词性
     else:
         return None
 
+def is_whitespace(c):
+    if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
+        return True
+    return False
+
+def get_char_of_token(sentence):
+    doc_tokens_original = []
+    char_to_word_offset_origin = []
+    pre_is_white_space = True
+    for c in sentence:
+        if is_whitespace(c):
+            pre_is_white_space = True
+        else:
+            if pre_is_white_space:
+                doc_tokens_original.append(c)
+            else:
+                doc_tokens_original[-1] += c
+            pre_is_white_space = False
+        char_to_word_offset_origin.append(len(doc_tokens_original) - 1)
+    return doc_tokens_original,char_to_word_offset_origin
+
+
+def find_question_para_sync_pair(question,paragraph):#try1
+    #先找question中所有词的同义词，遍历para中的所有词 看是否能在question的同义词集合中找到。
+    doc_tokens_query,char_to_word_offset_query = get_char_of_token(question)
+    doc_tokens_para,char_to_word_offset_para = get_char_of_token(paragraph)
+    question_lemma_has_stop = sentence_lemma(doc_tokens_query)
+    para_lemma_has_stop = sentence_lemma(doc_tokens_para)
+
+    question_lemma = []
+    para_lemma = []
+    lemma_q_map = []
+    lemma_p_map = []
+    for w in range(len(question_lemma_has_stop)):
+        if question_lemma_has_stop[w] not in STOP_WORDS:
+            question_lemma.append(question_lemma_has_stop[w])
+            lemma_q_map.append(w)
+    for w in range(len(para_lemma_has_stop)):
+        if para_lemma_has_stop[w] not in STOP_WORDS:
+            para_lemma.append(para_lemma_has_stop[w])
+            lemma_p_map.append(w)
+    sync_pair = {}
+    all_question_sync,ind_q = find_sen_sync(question_lemma)
+    all_para_sync,ind_p = find_sen_sync(para_lemma)
+    for q in all_question_sync[0].keys():
+        for p in all_para_sync[0].keys():
+            compare_set = set(all_question_sync[0][q]) & set(all_para_sync[0][p])
+            if len(compare_set) != 0 and p != q:
+                sync_pair[ind_q] = ind_p
+    return  sync_pair,\
+            doc_tokens_query,\
+            doc_tokens_para,\
+            char_to_word_offset_query,\
+            char_to_word_offset_para
+
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_file',default='/mnt/caijie/nq/all_squadformat_dev.json')
-    parser.add_argument('--output_file',default='/mnt/caijie/nq/only_short_dev.json')
+    parser.add_argument('--input_file',default='/data/home/t-jicai/caijie/analyse_bert/all_squadformat_nq_dev_withnqidx.json')
+    parser.add_argument('--output_file',default='/data/home/t-jicai/caijie/analyse_bert/only_short_dev.json')
     args = parser.parse_args()
     if os.path.exists(args.output_file):
         only_short_data = json.loads(open(args.output_file, 'r').readline())
