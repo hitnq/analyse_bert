@@ -44,7 +44,7 @@ python get_query_para_shortcut.py --input_file /path/to/your/nq_data --output_fi
 #### you will get:
 #### if using squad data:
 ```
-./sync_short_squad.json
+./sync_shortcut_squad.json
 ```
 #### if using Natural Question data: 
 ```
