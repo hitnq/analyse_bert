@@ -9,9 +9,6 @@ import tqdm
 from nltk.corpus import wordnet as wn
 from nltk import word_tokenize, pos_tag
 from nltk.stem import WordNetLemmatizer
-# from knockknock import teams_sender
-# CHAT_ID: int = 1
-# @teams_sender(token="https://outlook.office.com/webhook/656807a2-c249-4e72-955e-2e967c0716f1@72f988bf-86f1-41af-91ab-2d7cd011db47/IncomingWebhook/1057b874a850467ea4c1276c1eab752b/6ae68729-e69b-44d1-9bce-1803a813b0e3")
 
 STOP_WORDS = {"", "", "all", "being", "-","be","do","over", "through", "yourselves", "its", "before",
               "hadn", "with", "had", ",", "should", "to", "only", "under", "ours", "has", "ought", "do",
@@ -41,13 +38,44 @@ def get_only_short_answer_nq(input_path, output_path):
                 continue
             else:
                 only_short_data.append(example)
-        print('only short dev nq _examples len : ',len(only_short_data))  # 3263
         new_all_dev_data = {'version': 'only_short_nq', 'data': only_short_data}
         with open(output_path, 'w') as w:
             json.dump(new_all_dev_data, w)
         return new_all_dev_data
 
-def find_answer_paragraph(only_short_data):
+def find_answer_paragraph_squad(only_short_data):
+    # find para which answer in and get the pair
+    all_sync_pair = []
+    record_ids = []
+    final_shortcut_data = {'version': 'short_cut', 'data': []}
+    for paragraphs in tqdm.tqdm(only_short_data['data']):
+        context = paragraphs['paragraphs'][0]['context']
+        questions = [q['question'] for q in paragraphs['paragraphs'][0]['qas']]
+        answers = [q['answers'] for q in paragraphs['paragraphs'][0]['qas']]
+        qas_id = [q['id'] for q in paragraphs['paragraphs'][0]['qas']]
+        data = {'title': paragraphs['title'], 'paragraphs': []}
+        for question in questions:
+            paragraph = context
+            query_para_pair, doc_tokens_query, doc_tokens_para, \
+            char_to_word_offset_query, char_to_word_offset_para = \
+                find_question_para_shortcut_pair(question, paragraph)
+            if len(query_para_pair) != 0:
+                data['paragraphs'].append({'context': paragraph,
+                                           'doc_tokens_query': doc_tokens_query,
+                                           'doc_tokens_para': doc_tokens_para,
+                                           'char_to_word_offset_query': char_to_word_offset_query,
+                                           'char_to_word_offset_para': char_to_word_offset_para,
+                                           'qas': [{'question': question,
+                                                    'sync_pair': query_para_pair,
+                                                    'id': qas_id}]})
+                all_sync_pair.append(query_para_pair)
+        final_shortcut_data['data'].append(data)
+    with open('./sync_shortcut_squad.json', 'w') as w:
+        json.dump(final_shortcut_data, w)
+    print(all_sync_pair)
+    return all_sync_pair
+
+def find_answer_paragraph_nq(only_short_data):
     #find para which answer in and get the pair
     all_sync_pair = []
     record_ids = []
@@ -57,8 +85,7 @@ def find_answer_paragraph(only_short_data):
         question = paragraphs['paragraphs'][0]['qas'][0]['question']
         answers = paragraphs['paragraphs'][0]['qas'][0]['answers']
         qas_id = paragraphs['paragraphs'][0]['qas'][0]['id']
-        #print(context[answers[0]['nq_span_start']:answers[0]['nq_span_end']])
-        #print(answers[0]['nq_span_text'])
+
         data = {'title':paragraphs['title'],'paragraphs':[]}
         for answer in answers:
             paragraph_id = answer['nq_candidate_id']
@@ -86,15 +113,11 @@ def find_answer_paragraph(only_short_data):
                                                     'sync_pair': query_para_pair,
                                                     'id': qas_id}]})
                 all_sync_pair.append(query_para_pair)
-                record_ids.append(qas_id)
         final_shortcut_data['data'].append(data)
     with open('./sync_shortcut.json', 'w') as w:
         json.dump(final_shortcut_data,w)
     print(all_sync_pair)
-    record_ids = list(set(record_ids))
-    print(record_ids)
-    print('examples:',len(record_ids))
-    return record_ids,all_sync_pair
+    return all_sync_pair
 
 def is_whitespace(c):
     if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
@@ -140,38 +163,22 @@ def find_question_para_shortcut_pair(question,paragraph):
     return sync_pair,doc_tokens_query,doc_tokens_para,\
            char_to_word_offset_query,char_to_word_offset_para
 
-def sentence_lemma(doc_tokens):
-    tagged_sent = pos_tag(doc_tokens)
-    wnl = WordNetLemmatizer()
-    lemmas_sent = []
-    for tag in tagged_sent:
-        wordnet_pos = get_wordnet_pos(tag[1]) or wn.NOUN
-        lemmas_sent.append(wnl.lemmatize(tag[0], pos=wordnet_pos))  # 词形还原
-    return lemmas_sent
-
-
-def get_wordnet_pos(tag):
-    if tag.startswith('J'):
-        return wn.ADJ
-    elif tag.startswith('V'):
-        return wn.VERB
-    elif tag.startswith('N'):
-        return wn.NOUN
-    elif tag.startswith('R'):
-        return wn.ADV
-    else:
-        return None
-
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--input_file',default='/data/home/t-jicai/caijie/analyse_bert/all_squadformat_nq_dev_withnqidx.json')
-    parser.add_argument('--output_file',default='/data/home/t-jicai/caijie/analyse_bert/only_short_dev.json')
+    parser.add_argument('--input_file', default='/home/t-jicai/caijie/analyse_bert/train.json')
+    parser.add_argument('--output_file', default='/home/t-jicai/caijie/analyse_bert/only_short_train.json')
+    parser.add_argument('--task_name', default='nq')
     args = parser.parse_args()
-    if os.path.exists(args.output_file):
-        only_short_data = json.loads(open(args.output_file, 'r').readline())
-    else:
-        only_short_data = get_only_short_answer_nq(args.input_file, args.output_file)
-    find_answer_paragraph(only_short_data)
-    print('convert sync has completed!')
+    if args.task_name == 'nq':
+        if os.path.exists(args.output_file):
+            only_short_data = json.loads(open(args.output_file, 'r').readline())
+        else:
+            only_short_data = get_only_short_answer_nq(args.input_file, args.output_file)
+        find_answer_paragraph_nq(only_short_data)
+    elif args.task_name == 'squad':
+            only_short_data = json.loads(open(args.input_file, 'r').readline())
+        find_answer_paragraph_squad(only_short_data)
+    print('convert sync shortcut has completed!')
+
 
