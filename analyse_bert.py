@@ -183,8 +183,8 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_file', default='')
     parser.add_argument('--model_path', default='')
-    parser.add_argument('--different_layer',type=bool,default=True)
+    parser.add_argument('--different_layer',action='store_true', help='output bert different layer results')
     args = parser.parse_args()
     get_results(args.data_file,args.model_path,args.different_layer)
 
-
+#/data/home/t-jicai/caijie/analyse_bert/data/models/nq_bert_base
