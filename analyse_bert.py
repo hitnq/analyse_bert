@@ -6,7 +6,6 @@ from tqdm import tqdm
 from pytorch_transformers import *
 model_class = BertModel
 tokenizer_class = BertTokenizer
-
 sync_pair = set()
 
 def get_query_para(qp_pair):
@@ -16,10 +15,14 @@ def get_query_para(qp_pair):
     para_idx = qp_pair['para_sync_tokens']
     return question,query_idx,paragraph,para_idx
 
-def get_results(data_path):
+def get_results(data_path,model_path,different_layer):
     results = []
+    if different_layer:
+        output_path = data_path.split('.')[0] + 'diff_res_nq_finetune.txt'
+    else:
+        output_path = data_path.split('.')[0] + '_res.txt'
     with open(data_path,'r',encoding='utf-8') as f:
-        data = json.load(f)['data'][0:200]
+        data = json.load(f)['data'][0:100]
     for qp_pair in tqdm(data):
         question,query_idx,paragraph,para_idx = get_query_para(qp_pair)
         query_tokens = question.split()
@@ -33,14 +36,13 @@ def get_results(data_path):
         #     continue
         # else:
         #     sync_pair.add(combine_tokens)
-        result = bert(question,query_idx,paragraph,para_idx)
+
+        result = bert(question,query_idx,paragraph,para_idx,model_path,different_layer)
         if not result:
             continue
         else:
-            results.append(bert(question,query_idx,paragraph,para_idx))
-    # with open('./sync_pair.json','w',encoding='utf-8') as fout:
-    #     json.dump(sync_pair,fout)
-    with open('./newsqa_sim_results_shortcut_after.txt','w') as fout:
+            results.append(result)
+    with open(output_path,'w',encoding='utf-8') as fout:
         for res in results:
             fout.write(str(res))
             fout.write('\n')
@@ -90,15 +92,12 @@ def get_cos_sim(vector_a, vector_b):
 def get_dis(vec1,vec2):
     return np.linalg.norm(vec1 - vec2)
 
-def bert(question,query_idx,paragraph,para_idx):
-    # tokenizer = tokenizer_class.from_pretrained('bert-base-uncased')
-    # model = model_class.from_pretrained('bert-base-uncased')
-    tokenizer = tokenizer_class.from_pretrained('./data/nq_bert_base')
-    model = model_class.from_pretrained('./data/nq_bert_base')
-    # tokenizer = tokenizer_class.from_pretrained('./data/squad_bert_base')
-    # model = model_class.from_pretrained('./data/squad_bert_base')
-    # tokenizer = tokenizer_class.from_pretrained('./data/squad_bert_base')
-    # model = model_class.from_pretrained('./data/squad_bert_base')
+def bert(question,query_idx,paragraph,para_idx,model_path,different_layer):
+    tokenizer = tokenizer_class.from_pretrained(model_path)
+    if different_layer:
+        model = model_class.from_pretrained(model_path,output_hidden_states=True)
+    else:
+        model = model_class.from_pretrained(model_path)
     query_tokens_tokenize = tokenizer.tokenize(question)
     para_tokens_tokenize = tokenizer.tokenize(paragraph)
     query_tokens_tokenize.extend(para_tokens_tokenize)
@@ -137,9 +136,6 @@ def bert(question,query_idx,paragraph,para_idx):
             cur_token = ''
     para_idx_add_query = [i + len(question.split()) for i in para_idx]
     with torch.no_grad():
-        #print(input_ids.size(1))
-        outputs = model(input_ids)[0]
-        outputs = torch.squeeze(outputs,0)
         try:
             query_token_idx = list(map(lambda x:offset.index(x),query_idx))
             para_token_idx = list(map(lambda x:offset.index(x),para_idx_add_query))
@@ -164,16 +160,31 @@ def bert(question,query_idx,paragraph,para_idx):
                 else:
                     para_sync_token_idx.append(token_index)
                     break
+        if different_layer:
+            outputs_all = model(input_ids)[2]
+            cos_sims = []
+            for outputs in outputs_all[:-1]:
+                outputs = torch.squeeze(outputs, 0)
+                query_token_embedding, para_token_embedding = get_sync_embedding(outputs,
+                                                                                 query_sync_token_idx,
+                                                                                 para_sync_token_idx)
+                cos_sim = get_cos_sim(query_token_embedding, para_token_embedding)
+                cos_sims.append(cos_sim)
+            return cos_sims
+        else:
+            outputs = model(input_ids)[0]
+            outputs = torch.squeeze(outputs, 0)
 
-        query_token_embedding,para_token_embedding = get_sync_embedding(outputs,query_sync_token_idx,para_sync_token_idx)
-        #print(qp_tokens_tokenizer[query_sync_token_idx[0][0]])
-        #print(qp_tokens_tokenizer[para_sync_token_idx[0][0]])
-        cos_sim = get_cos_sim(query_token_embedding,para_token_embedding)
-        #print(cos_sim)
-    return cos_sim
+            query_token_embedding,para_token_embedding = get_sync_embedding(outputs,query_sync_token_idx,para_sync_token_idx)
+            cos_sim = get_cos_sim(query_token_embedding,para_token_embedding)
+            return cos_sim
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_file', default='')
+    parser.add_argument('--model_path', default='')
+    parser.add_argument('--different_layer',type=bool,default=True)
     args = parser.parse_args()
-    get_results(args.data_file)
+    get_results(args.data_file,args.model_path,args.different_layer)
+
+
