@@ -4,6 +4,7 @@ import numpy as np
 import argparse
 from tqdm import tqdm
 from pytorch_transformers import *
+
 model_class = BertModel
 tokenizer_class = BertTokenizer
 sync_pair = set()
@@ -26,21 +27,31 @@ def get_random_para(data,question):
     res_para = random_para[np.random.randint(0, len(random_para), 1)[0]]
     return res_para,np.random.randint(0, len(res_para.split()), 1).tolist()
 
+def get_random_para_WSC(paragraph):
+    index_1 = np.random.randint(0, len(paragraph.split()), 1)[0]
+    index_2 = np.random.randint(0, len(paragraph.split()), 1)[0]
+    while index_1 == index_2 or paragraph.split()[index_1] == paragraph.split()[index_2]:
+        index_1 = np.random.randint(0, len(paragraph.split()), 1)[0]
+        index_2 = np.random.randint(0, len(paragraph.split()), 1)[0]
+    return [index_1],[index_2]
 
 def get_results(data_path,model_path,different_layer,look_embedding,tsne,distance,random_mode):
     results = []
+    tokenizer = tokenizer_class.from_pretrained(model_path)
     if different_layer:
+        model = model_class.from_pretrained(model_path, output_hidden_states=True)
         if distance == 'cos':
             if not random_mode:
-                output_path = data_path.split('.')[0] + 'diff_res_squad_finetune_cos.txt'
+                output_path = data_path.split('.')[0] + 'diff_res_cos.txt'
             else:
-                output_path = data_path.split('.')[0] + 'diff_random_res_squad_finetune_cos.txt'
+                output_path = data_path.split('.')[0] + 'diff_random_res_cos.txt'
         elif distance == 'euc':
             if not random_mode:
-                output_path = data_path.split('.')[0] + 'diff_res_euc.txt'
+                output_path = data_path.split('.')[0] + 'diff_res_squad_finetune_euc.txt'
             else:
-                output_path = data_path.split('.')[0] + 'diff_random_res_euc.txt'
+                output_path = data_path.split('.')[0] + 'diff_random_res_squad_finetune_euc.txt'
     else:
+        model = model_class.from_pretrained(model_path)
         output_path = data_path.split('.')[0] + '_res_squad_finetune_euc.txt'
     with open(data_path,'r',encoding='utf-8') as f:
         data = json.load(f)['data'][:100]
@@ -49,13 +60,18 @@ def get_results(data_path,model_path,different_layer,look_embedding,tsne,distanc
         question,query_idx,paragraph,para_idx = get_query_para(qp_pair)
         count += 1
         if random_mode:
-            random_para,random_index = get_random_para(data,question)
-            result = bert(question, query_idx, paragraph, para_idx,
-                          model_path, different_layer, look_embedding, tsne, distance,
-                          random_para,random_index)
+            if 'WSC' in data_path:
+                random_index_1, random_index_2 = get_random_para_WSC(paragraph)
+                result = bert(question, random_index_1, paragraph, random_index_2,
+                              model, tokenizer, different_layer, look_embedding, tsne, distance)
+            else:
+                random_para,random_index = get_random_para(data, question)
+                result = bert(question, query_idx, paragraph, para_idx,
+                              model, tokenizer, different_layer, look_embedding, tsne, distance,
+                              random_para,random_index)
         else:
             result = bert(question, query_idx, paragraph, para_idx,
-                      model_path, different_layer, look_embedding, tsne, distance)
+                      model, tokenizer, different_layer, look_embedding, tsne, distance)
         if not result:
             print(count)
             continue
@@ -121,14 +137,9 @@ def get_dis(vec1,vec2):
     return np.linalg.norm(np.mat(vec1) - np.mat(vec2))
 
 def bert(question,query_idx,paragraph,para_idx,
-         model_path,different_layer,look_embedding,tsne,distance,
+         model,tokenizer,different_layer,look_embedding,tsne,distance,
          random_para=None,random_index=None):
 
-    tokenizer = tokenizer_class.from_pretrained(model_path)
-    if different_layer:
-        model = model_class.from_pretrained(model_path,output_hidden_states=True)
-    else:
-        model = model_class.from_pretrained(model_path)
     paragraph = tokenizer.convert_tokens_to_string(tokenizer.tokenize(paragraph))
     question = tokenizer.convert_tokens_to_string(tokenizer.tokenize(question))
     qp_tokens_tokenizer = []
@@ -188,6 +199,9 @@ def bert(question,query_idx,paragraph,para_idx,
         para_sync_token_idx = []
         for i in query_token_idx:
             token_index = [i]
+            if i+1 >= len(offset)-1:
+                query_sync_token_idx = [token_index]
+                break
             for j in range(i+1,len(offset)):
                 if offset[j] == i:
                     token_index.append(j)
@@ -206,7 +220,7 @@ def bert(question,query_idx,paragraph,para_idx,
                 else:
                     para_sync_token_idx.append(token_index)
                     break
-        assert query_sync_token_idx != []
+        # assert query_sync_token_idx != []
         assert para_sync_token_idx != []
         if different_layer:
             outputs_all = model(input_ids)[2]

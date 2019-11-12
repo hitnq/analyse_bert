@@ -1,8 +1,12 @@
 import json
-if __name__=='__main__':
-    with open('/data/home/t-jicai/caijie/analyse_bert/data/sync_sync.json','r') as f:
-        with open('./data/sync_sync/read_sync_data.txt', 'w') as w:
+import argparse
+#'/data/home/t-jicai/caijie/analyse_bert/data/sync_sync.json'
+
+def convert_data(data_file,read_data_file,save_file):
+    with open(data_file,'r', encoding='utf-8') as f:
+        with open(read_data_file, 'w', encoding='utf-8') as w:
             data = json.load(f)['data']
+            example_count = 0
             sync_sync = {'version': 'sync_sync', 'data': []}
             for para in data:
                 if para['paragraphs']:
@@ -22,13 +26,21 @@ if __name__=='__main__':
                             qp_pair['para_sync_tokens'] = [para_index]
                             w.write(p['doc_tokens_para'][para_index] + ' ')
 
-                            # w.write(p['doc_tokens_query'][int(str(qa['sync_pair'])[2])] +'\n')
-                            # w.write(p['context'][int(str(qa['sync_pair'])[6]):int(str(qa['sync_pair'])[6])+10] + '\n')
                             qp_pair['paragraph'] = p['context']
                             w.write('\n')
-                            # w.write(p['context'][int(str(qa['sync_pair'])[6]):int(str(qa['sync_pair'])[6])+10] + '\n')
                             w.write(p['context'] + '\n')
                             w.write('\n')
                             sync_sync['data'].append(qp_pair)
-            with open('./data/sync_sync/sync_sync.json', 'w', encoding='utf-8') as fout:
+                            example_count += 1
+            with open(save_file, 'w', encoding='utf-8') as fout:
                 json.dump(sync_sync, fout)
+            return example_count
+
+if __name__=='__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--data_file', required=True, default='')
+    parser.add_argument('--read_data_file', required=True, default='')
+    parser.add_argument('--save_file', required=True, default='')
+    args = parser.parse_args()
+    convert_data(args.data_file, args.read_data_file, args.save_file)
+    print('convert %d sync_sync complete' % example_count)
