@@ -20,7 +20,7 @@ def convert_data(data_file,read_data_file,save_file):
                             query_index, para_index = qa['sync_pair'].keys(), qa['sync_pair'].values()
                             query_index = [i for i in query_index][0]
                             para_index = [i for i in para_index][0]
-                            qp_pair['query_sync_tokens'] = [query_index]
+                            qp_pair['query_sync_tokens'] = [int(query_index)]
                             w.write(p['doc_tokens_query'][int(query_index)] + '\n')
 
                             qp_pair['para_sync_tokens'] = [para_index]
@@ -42,5 +42,5 @@ if __name__=='__main__':
     parser.add_argument('--read_data_file', required=True, default='')
     parser.add_argument('--save_file', required=True, default='')
     args = parser.parse_args()
-    convert_data(args.data_file, args.read_data_file, args.save_file)
+    example_count = convert_data(args.data_file, args.read_data_file, args.save_file)
     print('convert %d sync_sync complete' % example_count)
