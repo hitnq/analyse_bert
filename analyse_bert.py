@@ -15,7 +15,6 @@ multihead_res = []
 
 def get_query_para(qp_pair):
     question = qp_pair['question']
-    # query_idx = [int(qp_pair['query_sync_tokens'][0])]
     query_idx = qp_pair['query_sync_tokens']
     paragraph = qp_pair['paragraph']
     para_idx = qp_pair['para_sync_tokens']
@@ -55,20 +54,41 @@ def get_results(data_path, model_path, different_layer, look_embedding, tsne, di
             model = model_class.from_pretrained(model_path, output_hidden_states=True)
         if distance == 'cos':
             if not random_mode:
-                output_path = data_path.split('.')[0] + 'diff_res_cos.txt'
+                if 'squad_bert_base' in model_path:
+                    output_path = data_path.split('.')[0] + 'diff_res_squad_finetune_cos.txt'
+                elif 'nq_bert_base' in args.model_path:
+                    output_path = data_path.split('.')[0] + 'diff_res_nq_finetune_cos.txt'
+                elif 'bert-base-uncased' in args.model_path:
+                    output_path = data_path.split('.')[0] + 'diff_res_cos.txt'
             else:
-                output_path = data_path.split('.')[0] + 'diff_random_res_cos.txt'
+                if 'squad_bert_base' in model_path:
+                    output_path = data_path.split('.')[0] + 'diff_random_res_squad_finetune_cos.txt'
+                elif 'nq_bert_base' in args.model_path:
+                    output_path = data_path.split('.')[0] + 'diff_random_res_nq_finetune_cos.txt'
+                elif 'bert-base-uncased' in args.model_path:
+                    output_path = data_path.split('.')[0] + 'diff_random_res_cos.txt'
         elif distance == 'euc':
             if not random_mode:
-                output_path = data_path.split('.')[0] + 'diff_res_squad_finetune_euc.txt'
+                if 'squad_bert_base' in model_path:
+                    output_path = data_path.split('.')[0] + 'diff_res_squad_finetune_euc.txt'
+                elif 'nq_bert_base' in args.model_path:
+                    output_path = data_path.split('.')[0] + 'diff_res_nq_finetune_euc.txt'
+                elif 'bert-base-uncased' in args.model_path:
+                    output_path = data_path.split('.')[0] + 'diff_res_euc.txt'
             else:
-                output_path = data_path.split('.')[0] + 'diff_random_res_squad_finetune_euc.txt'
+                if 'squad_bert_base' in model_path:
+                    output_path = data_path.split('.')[0] + 'diff_random_res_squad_finetune_euc.txt'
+                elif 'nq_bert_base' in args.model_path:
+                    output_path = data_path.split('.')[0] + 'diff_random_res_nq_finetune_euc.txt'
+                elif 'bert-base-uncased' in args.model_path:
+                    output_path = data_path.split('.')[0] + 'diff_random_res_euc.txt'
     else:
         model = model_class.from_pretrained(model_path)
         output_path = data_path.split('.')[0] + '_res_squad_finetune_euc.txt'
     with open(data_path, 'r', encoding='utf-8') as f:
         data = json.load(f)['data'][:100]
     count = 0
+    # two_embeddings = []
     for qp_pair in tqdm(data):
         question, query_idx, paragraph, para_idx = get_query_para(qp_pair)
         count += 1
@@ -89,7 +109,10 @@ def get_results(data_path, model_path, different_layer, look_embedding, tsne, di
             print(count)
             continue
         else:
-            results.append(result)
+            results.append(result[0])
+            # two_embeddings.append(result[1])
+    # import pickle
+    # pickle.dump(two_embeddings,open('/data/caijie/analyse_bert/data/probing/bigram_shift/two_embedding.pickle','wb'))
 
     if tsne:
         from openTSNE import TSNE
@@ -155,6 +178,8 @@ def get_dis(vec1, vec2):
 def bert(question, query_idx, paragraph, para_idx,
          model, tokenizer, different_layer, look_embedding, tsne, distance, multihead,
          random_para=None, random_index=None):
+    query_idx = [int(item) for item in query_idx]
+    para_idx = [int(item) for item in para_idx]
     paragraph = tokenizer.convert_tokens_to_string(tokenizer.tokenize(paragraph))
     question = tokenizer.convert_tokens_to_string(tokenizer.tokenize(question))
     qp_tokens_tokenizer = []
@@ -245,18 +270,20 @@ def bert(question, query_idx, paragraph, para_idx,
                                       'multihead': model_outputs[-1]})
             outputs_all = model_outputs[2]
             sims = []
+            two_embeddings = []
             for outputs in outputs_all[:-1]:
                 outputs = torch.squeeze(outputs, 0)
                 query_token_embedding, para_token_embedding = get_sync_embedding(outputs,
                                                                                  query_sync_token_idx,
                                                                                  para_sync_token_idx)
+                two_embeddings.append([query_token_embedding,para_token_embedding])
                 if distance == 'cos':
                     sim = get_cos_sim(query_token_embedding, para_token_embedding)
                     sims.append(sim)
                 elif distance == 'euc':
                     sim = get_dis(query_token_embedding, para_token_embedding)
                     sims.append(sim)
-            return sims
+            return (sims,two_embeddings)
         else:
             outputs = model_outputs[0]
             outputs = torch.squeeze(outputs, 0)
@@ -269,6 +296,7 @@ def bert(question, query_idx, paragraph, para_idx,
                 exit()
             query_token_embedding, para_token_embedding = get_sync_embedding(outputs, query_sync_token_idx,
                                                                              para_sync_token_idx)
+
             if not query_token_embedding or not para_token_embedding:
                 print(1)
             if tsne:
@@ -276,10 +304,10 @@ def bert(question, query_idx, paragraph, para_idx,
                 tsne_arrays.append(para_token_embedding)
             if distance == 'cos':
                 sim = get_cos_sim(query_token_embedding, para_token_embedding)
-                return sim
+                return (sim,)
             elif distance == 'euc':
                 sim = get_dis(query_token_embedding, para_token_embedding)
-                return sim
+                return (sim,)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -302,21 +330,22 @@ if __name__ == '__main__':
                 args.random_mode,
                 args.multihead)
     data_path = '/'.join(args.data_file.split('/')[:-1])
-    if args.random_mode:
-        if 'squad_bert_base' in args.model_path:
-            pickle.dump(multihead_res, open(data_path + '/multihead_squad_finetune_random.pickle', 'wb'))
-        elif 'nq_bert_base' in args.model_path:
-            pickle.dump(multihead_res,open(data_path + '/multihead_nq_finetune_random.pickle','wb'))
-        elif 'bert-base-uncased' in args.model_path:
-            pickle.dump(multihead_res,open(data_path + '/multihead_random.pickle','wb'))
+    if args.multihead:
+        if args.random_mode:
+            if 'squad_bert_base' in args.model_path:
+                pickle.dump(multihead_res, open(data_path + '/multihead_squad_finetune_random.pickle', 'wb'))
+            elif 'nq_bert_base' in args.model_path:
+                pickle.dump(multihead_res,open(data_path + '/multihead_nq_finetune_random.pickle','wb'))
+            elif 'bert-base-uncased' in args.model_path:
+                pickle.dump(multihead_res,open(data_path + '/multihead_random.pickle','wb'))
 
-    else:
-        if 'squad_bert_base' in args.model_path:
-            pickle.dump(multihead_res, open(data_path + '/multihead_squad_finetune.pickle', 'wb'))
-        elif 'nq_bert_base' in args.model_path:
-            pickle.dump(multihead_res,open(data_path + '/multihead_nq_finetune.pickle','wb'))
-        elif 'bert-base-uncased' in args.model_path:
-            pickle.dump(multihead_res,open(data_path + '/multihead.pickle','wb'))
+        else:
+            if 'squad_bert_base' in args.model_path:
+                pickle.dump(multihead_res, open(data_path + '/multihead_squad_finetune.pickle', 'wb'))
+            elif 'nq_bert_base' in args.model_path:
+                pickle.dump(multihead_res,open(data_path + '/multihead_nq_finetune.pickle','wb'))
+            elif 'bert-base-uncased' in args.model_path:
+                pickle.dump(multihead_res,open(data_path + '/multihead.pickle','wb'))
 
 # /data/caijie/analyse_bert/models/nq_bert_base
 # /data/home/t-jicai/caijie/analyse_bert/data/nq/ask_type/ask_type.json
