@@ -21,12 +21,22 @@ def get_query_para(qp_pair):
     return question, query_idx, paragraph, para_idx
 
 
-def get_random_para(data, question):
+def get_random_para(data, question,tokenizer):
     random_para = []
     for qp in data:
         para = qp['paragraph']
         query = qp['question']
-        if query != question and len(para.split() + query.split()) < 512:
+        if query != question and len(tokenizer.tokenize(para) + tokenizer.tokenize(query)) < 512:
+            random_para.append(para)
+    res_para = random_para[np.random.randint(0, len(random_para), 1)[0]]
+    return res_para, np.random.randint(0, len(res_para.split()), 1).tolist()
+
+def get_random_para_sentence(data, question,tokenizer):
+    random_para = []
+    for qp in data:
+        para = qp['paragraph']
+        query = qp['question']
+        if query != question and len(tokenizer.tokenize(para) + tokenizer.tokenize(query)) < 512:
             random_para.append(para)
     res_para = random_para[np.random.randint(0, len(random_para), 1)[0]]
     return res_para, np.random.randint(0, len(res_para.split()), 1).tolist()
@@ -55,18 +65,18 @@ def get_results(data_path, model_path, different_layer, look_embedding, tsne, di
         if distance == 'cos':
             if not random_mode:
                 if 'squad_bert_base' in model_path:
-                    output_path = data_path.split('.')[0] + 'diff_res_squad_finetune_cos.txt'
+                    output_path = data_path.split('.')[0] + 'diff_res_squad_finetune_cos_2.txt'
                 elif 'nq_bert_base' in args.model_path:
-                    output_path = data_path.split('.')[0] + 'diff_res_nq_finetune_cos.txt'
+                    output_path = data_path.split('.')[0] + 'diff_res_nq_finetune_cos_2.txt'
                 elif 'bert-base-uncased' in args.model_path:
-                    output_path = data_path.split('.')[0] + 'diff_res_cos.txt'
+                    output_path = data_path.split('.')[0] + 'diff_res_cos_2.txt'
             else:
                 if 'squad_bert_base' in model_path:
-                    output_path = data_path.split('.')[0] + 'diff_random_res_squad_finetune_cos.txt'
+                    output_path = data_path.split('.')[0] + 'diff_random_res_squad_finetune_cos_2.txt'
                 elif 'nq_bert_base' in args.model_path:
-                    output_path = data_path.split('.')[0] + 'diff_random_res_nq_finetune_cos.txt'
+                    output_path = data_path.split('.')[0] + 'diff_random_res_nq_finetune_cos_2.txt'
                 elif 'bert-base-uncased' in args.model_path:
-                    output_path = data_path.split('.')[0] + 'diff_random_res_cos.txt'
+                    output_path = data_path.split('.')[0] + 'diff_random_res_cos_2.txt'
         elif distance == 'euc':
             if not random_mode:
                 if 'squad_bert_base' in model_path:
@@ -86,19 +96,25 @@ def get_results(data_path, model_path, different_layer, look_embedding, tsne, di
         model = model_class.from_pretrained(model_path)
         output_path = data_path.split('.')[0] + '_res_squad_finetune_euc.txt'
     with open(data_path, 'r', encoding='utf-8') as f:
-        data = json.load(f)['data'][:100]
+        data = json.load(f)['data']
+        print(len(data))
     count = 0
-    # two_embeddings = []
+    #two_embeddings = []
     for qp_pair in tqdm(data):
         question, query_idx, paragraph, para_idx = get_query_para(qp_pair)
         count += 1
         if random_mode:
-            if 'WSC' in data_path:
-                random_index_1, random_index_2 = get_random_para_WSC(paragraph)
+            if 'WSC' in data_path or 'coreference' in data_path:
+                random_index_1, random_index_2 = get_random_para_WSC(paragraph,tokenizer)
                 result = bert(question, random_index_1, paragraph, random_index_2,
                               model, tokenizer, different_layer, look_embedding, tsne, distance, multihead)
+            elif 'sentence_ranking' in data_path:
+                random_para, random_index = get_random_para(data, question, tokenizer)
+                result = bert(question, query_idx, paragraph, para_idx,
+                              model, tokenizer, different_layer, look_embedding, tsne, distance, multihead,
+                              random_para, random_index)
             else:
-                random_para, random_index = get_random_para(data, question)
+                random_para, random_index = get_random_para(data, question,tokenizer)
                 result = bert(question, query_idx, paragraph, para_idx,
                               model, tokenizer, different_layer, look_embedding, tsne, distance, multihead,
                               random_para, random_index)
@@ -110,7 +126,7 @@ def get_results(data_path, model_path, different_layer, look_embedding, tsne, di
             continue
         else:
             results.append(result[0])
-            # two_embeddings.append(result[1])
+            #two_embeddings.append(result[1])
     # import pickle
     # pickle.dump(two_embeddings,open('/data/caijie/analyse_bert/data/probing/bigram_shift/two_embedding.pickle','wb'))
 
@@ -178,8 +194,8 @@ def get_dis(vec1, vec2):
 def bert(question, query_idx, paragraph, para_idx,
          model, tokenizer, different_layer, look_embedding, tsne, distance, multihead,
          random_para=None, random_index=None):
-    query_idx = [int(item) for item in query_idx]
-    para_idx = [int(item) for item in para_idx]
+    # query_idx = [int(item) for item in query_idx]
+    # para_idx = [int(item) for item in para_idx]
     paragraph = tokenizer.convert_tokens_to_string(tokenizer.tokenize(paragraph))
     question = tokenizer.convert_tokens_to_string(tokenizer.tokenize(question))
     qp_tokens_tokenizer = []
@@ -226,9 +242,11 @@ def bert(question, query_idx, paragraph, para_idx,
             j += 1
             cur_token = ''
     if random_para != None and random_index != None:
-        para_idx_add_query = [i + len(question.split()) for i in random_index]
+        # para_idx_add_query = [i + len(question.split()) for i in random_index]
+        para_idx_add_query = [i for i in random_index]
     else:
-        para_idx_add_query = [i + len(question.split()) for i in para_idx]
+        # para_idx_add_query = [i + len(question.split()) for i in para_idx]
+        para_idx_add_query = [i for i in para_idx]
     with torch.no_grad():
         try:
             query_token_idx = list(map(lambda x: offset.index(x), query_idx))
@@ -261,7 +279,10 @@ def bert(question, query_idx, paragraph, para_idx,
                     para_sync_token_idx.append(token_index)
                     break
         assert query_sync_token_idx != []
-        assert para_sync_token_idx != []
+        try:
+            assert para_sync_token_idx != []
+        except:
+            print(1)
         model_outputs = model(input_ids)
         if different_layer:
             if multihead:
@@ -283,6 +304,9 @@ def bert(question, query_idx, paragraph, para_idx,
                 elif distance == 'euc':
                     sim = get_dis(query_token_embedding, para_token_embedding)
                     sims.append(sim)
+            # with open('/data/caijie/analyse_bert/data/probing/bigram_shift/bigram_shiftdiff_res_cos.txt', 'a+', encoding='utf-8') as fout:
+            #     fout.write(str(sims))
+            #     fout.write('\n')
             return (sims,two_embeddings)
         else:
             outputs = model_outputs[0]
@@ -347,5 +371,5 @@ if __name__ == '__main__':
             elif 'bert-base-uncased' in args.model_path:
                 pickle.dump(multihead_res,open(data_path + '/multihead.pickle','wb'))
 
-# /data/caijie/analyse_bert/models/nq_bert_base
+# /data/nieping/pytorch-transformers/models/nq_bert_base_512_4e5_64b_2epo
 # /data/home/t-jicai/caijie/analyse_bert/data/nq/ask_type/ask_type.json

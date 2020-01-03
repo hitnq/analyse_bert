@@ -4,7 +4,7 @@ import argparse
 def convert_data(data_file,read_data_file,save_file):
     with open(data_file, 'r', encoding='utf-8') as fin:
         data = json.loads(fin.readline())
-        sync_part = {'version': 'sync_part', 'data': []}
+        sync_part = {'version': 'ask_type', 'data': []}
         example_count = 0
         with open(read_data_file, 'w',
                   encoding='utf-8') as fout:
@@ -16,10 +16,9 @@ def convert_data(data_file,read_data_file,save_file):
                     continue
                 qp_pair['question'] = ' '.join([token[0] for token in attribute['question_tokens']])
                 fout.write(qp_pair['question'] + '\n')
-                qp_pair['query_sync_tokens'] = [0]
+                qp_pair['query_sync_tokens'] = 0
                 fout.write(str(qp_pair['query_sync_tokens']) + ' ')
-                for idx in qp_pair['query_sync_tokens']:
-                    fout.write(qp_pair['question'].split()[idx] + ' ')
+                fout.write(qp_pair['question'].split()[0] + ' ')
                 fout.write('\n')
                 qp_pair['paragraph'] = attribute['paragraph']
                 fout.write(qp_pair['paragraph'] + '\n')
@@ -41,11 +40,88 @@ def convert_data(data_file,read_data_file,save_file):
         json.dump(sync_part, fout)
     return example_count
 
+def convert_data_all(data_file,read_data_file,save_file):
+    with open(data_file,'r', encoding='utf-8') as f:
+        with open(read_data_file, 'w', encoding='utf-8') as w:
+            data = json.load(f)['data']
+            example_count = 0
+            sync_sync = {'version': 'sync_sync', 'data': []}
+            for para in data:
+                if para['paragraphs']:
+                    if para['paragraphs'][0]['doc_tokens_query'][0] not in ['who','where','when']:
+                        continue
+                    for p in para['paragraphs']:
+                        for qa in p['qas']:
+                            qp_pair = {}
+
+                            w.write(qa['question']+'\n')
+                            qp_pair['question'] = qa['question']
+
+                            query_index, para_index = qa['sync_pair'].keys(), qa['sync_pair'].values()
+                            query_index = [i for i in query_index][0]
+                            para_index = [i for i in para_index][0]
+                            qp_pair['query_sync_tokens'] = [int(query_index)]
+                            w.write(p['doc_tokens_query'][int(query_index)] + '\n')
+                            ans_token_pos = p['char_to_word_offset_para'][para_index]
+
+                            qp_pair['para_sync_tokens'] = [i + ans_token_pos for i in range(len(qa['answer']['text'].split()))]
+                            w.write(str([p['doc_tokens_para'][i] for i in qp_pair['para_sync_tokens']]) + ' ')
+
+                            qp_pair['paragraph'] = p['context']
+                            w.write('\n')
+                            w.write(p['context'] + '\n')
+                            w.write('\n')
+                            sync_sync['data'].append(qp_pair)
+                            example_count += 1
+            with open(save_file, 'w', encoding='utf-8') as fout:
+                json.dump(sync_sync, fout)
+            return example_count
+
+def convert_data_all_squad(data_file,read_data_file,save_file):
+    with open(data_file,'r', encoding='utf-8') as f:
+        with open(read_data_file, 'w', encoding='utf-8') as w:
+            data = json.load(f)['data'][90000:]
+            example_count = 0
+            ask_type_squad = {'version': 'ask_typesquad', 'data': []}
+            for para in data:
+                if para['paragraphs']:
+                    if para['paragraphs'][0]['doc_tokens_query'][0] not in ['who','where','when']:
+                        continue
+                    para['paragraphs'][0]['qas'][0]['answers'] = [para['paragraphs'][0]['qas'][0]['answer']]
+                    para['paragraphs'][0]['qas'][0]['answers'][0]['answer_start'] = para['paragraphs'][0]['qas'][0]['sync_pair']['0']
+                    ask_type_squad['data'].append(para)
+                    # for p in para['paragraphs']:
+                    #     for qa in p['qas']:
+                    #         qp_pair = {}
+                    #
+                    #         w.write(qa['question']+'\n')
+                    #         qp_pair['question'] = qa['question']
+                    #
+                    #         query_index, para_index = qa['sync_pair'].keys(), qa['sync_pair'].values()
+                    #         query_index = [i for i in query_index][0]
+                    #         para_index = [i for i in para_index][0]
+                    #         qp_pair['query_sync_tokens'] = [int(query_index)]
+                    #         w.write(p['doc_tokens_query'][int(query_index)] + '\n')
+                    #         ans_token_pos = p['char_to_word_offset_para'][para_index]
+                    #
+                    #         qp_pair['para_sync_tokens'] = [i + ans_token_pos for i in range(len(qa['answer']['text'].split()))]
+                    #         w.write(str([p['doc_tokens_para'][i] for i in qp_pair['para_sync_tokens']]) + ' ')
+                    #
+                    #         qp_pair['paragraph'] = p['context']
+                    #         w.write('\n')
+                    #         w.write(p['context'] + '\n')
+                    #         w.write('\n')
+                    #         sync_sync['data'].append(qp_pair)
+                    example_count += 1
+            with open(save_file, 'w', encoding='utf-8') as fout:
+                json.dump(ask_type_squad, fout)
+            return example_count
+
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_file', required=True, default='')
     parser.add_argument('--read_data_file', required=True, default='')
     parser.add_argument('--save_file', required=True, default='')
     args = parser.parse_args()
-    example_count = convert_data(args.data_file, args.read_data_file, args.save_file)
+    example_count = convert_data_all_squad(args.data_file, args.read_data_file, args.save_file)
     print('convert %d ask_type complete' % example_count)
